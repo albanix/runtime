@@ -2,10 +2,17 @@ use std::sync::{
     Mutex,
     Arc
 };
+
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::future::Future;
-use std::task::{Waker, Wake, Context, Poll};
+
+use std::task::{
+    Waker, 
+    Wake, 
+    Context, 
+Poll
+};
 
 struct Executor {
     queue: Mutex<VecDeque<Arc<Task>>>, // VecDeque - швидше за звичайний Vector і парцює з push_front, push_back. Що є доволі зручним у контексті мого рантайму (vec - 6 O(n), VecDeque O(1)), вона надає FIFO, тому це зручно.
@@ -25,18 +32,24 @@ impl Executor {
             executor: self.clone(),
         });
 
+        // ставимо таску на виконання в чергу
+        self.queue.lock().unwrap().push_back(task);
+    }
+
+    fn run(&self) {
         while let Some(task) = self.queue.lock().unwrap().pop_front() {
             let waker = Waker::from(task.clone());
             let mut cx = Context::from_waker(&waker);
-            let mut fut = task.future.lock().unwrap();
 
-            match fut.as_mut().poll(&mut cx) {
-                Poll::Ready(_) => {
-                    // Таска завершається
+            let mut future = task.future.lock().unwrap();
+
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(_) => { 
+                    // Таска виконається
                 },
-                Poll::Pending => {
-                    // Waker має повернути назад її у стек
-                }
+                Poll::Pending => { 
+                    // Таска покладеться в стек //
+                },
             }
         }
     }
@@ -50,5 +63,19 @@ impl Wake for Task {
     }
 }
 fn main() {
-    print!("123");
+    let rt = Arc::new(Executor {
+        queue: Mutex::new(VecDeque::new())
+    });
+
+    rt.spawn(async {
+        println!("Hello from task 1");
+    });
+
+    rt.spawn(async {
+        println!("Hello from task 2");
+    });
+    rt.run();
+
+    println!("1");
+    println!("2");
 }
