@@ -5,7 +5,7 @@ use std::sync::{
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::future::Future;
-use std::task::{Waker, Wake};
+use std::task::{Waker, Wake, Context, Poll};
 
 struct Executor {
     queue: Mutex<VecDeque<Arc<Task>>>, // VecDeque - швидше за звичайний Vector і парцює з push_front, push_back. Що є доволі зручним у контексті мого рантайму (vec - 6 O(n), VecDeque O(1)), вона надає FIFO, тому це зручно.
@@ -26,7 +26,18 @@ impl Executor {
         });
 
         while let Some(task) = self.queue.lock().unwrap().pop_front() {
-            //
+            let waker = Waker::from(task.clone());
+            let mut cx = Context::from_waker(&waker);
+            let mut fut = task.future.lock().unwrap();
+
+            match fut.as_mut().poll(&mut cx) {
+                Poll::Ready(_) => {
+                    // Таска завершається
+                },
+                Poll::Pending => {
+                    // Waker має повернути назад її у стек
+                }
+            }
         }
     }
 }
