@@ -73,30 +73,45 @@ impl Wake for Task {
 
 impl Reactor {
     pub fn new() -> Self {
+        // rawfd індертифікатор ресурса ОС 
+        // epoll_fd це лише файловий дескриптор який вкаує на цей kernel-object
+        // epoll по факту нічого не знає про задачі він сповіщає про готовність операції.
         let epoll_fd = unsafe {
-            libc::epoll_create(0)
+            libc::epoll_create1(0)
         };
         
+        if epoll_fd < 0 {
+            panic!("epoll_create: failed!");
+        }
+
         Self {
-            epoll_fd,
-            wakers: Mutex::new(HashMap::new()),
+            epoll_fd, // файловий дескриптор
+            wakers: Mutex::new(HashMap::new()), // тут у нас вже є таблица, вона зв'язує fd - яка задча чекає певний fd.
         }
     }
 
     pub fn register(&self, fd: RawFd, writable: bool, waker: Waker) {
+        // event - створюємо структуру epoll_event, events по факту це події які нас цікавлять, тобто запис або читання, u64 це користувацькі дані, тобто epoll поверне тобі назад при epoll_wait()
         let mut event = epoll_event {
             events: if writable { EPOLLOUT as u32 } else { EPOLLIN as u32 },
             u64: fd as u64, 
         };
+        
+        // можна це описати як: ядро дивився за цим fd, як що він ready, додаємо в таблицю
         unsafe {
             libc::epoll_ctl(self.epoll_fd, EPOLL_CTL_ADD, fd, &mut event as *mut _,);
         }
-
+        // коли ядро дає ready ми будимо waker.
         self.wakers.lock().unwrap().insert(fd, waker);
     }
 
+    /// **Блокуємо потік, поки ядро не сповістись про готовність хоча би одного fd.**
     pub fn wait(&self) {
-        let mut events = [libc::epoll_event { events: 0, u64: 0} ];
+        let mut events = vec![libc::epoll_event { events: 0, u64: 0}; 1024];
+        // events - буфер подій
+
+        // epoll - це наш epoll instance, events куда ядро запише події, 1024 макисмум подій за один виклик
+        // -1 блокуватись вічно
         let nfds = unsafe {
             epoll_wait(self.epoll_fd, events.as_mut_ptr(), 1024, -1)
         };
@@ -104,8 +119,10 @@ impl Reactor {
         for i in 0..nfds as usize {
             let fd = events[i].u64 as RawFd;
             if let Some(waker)  = self.wakers.lock().unwrap().remove(&fd) {
-                waker.wake();
+                waker.wake(); // пробудження задачі
             }
         }
+
+        // оброка подій, достаємо u64 який поклали в register, epoll - не знає, що це fd. Це прості користувацькі дані, ми використовуємо це як ідентифікатор.
     }
 }
