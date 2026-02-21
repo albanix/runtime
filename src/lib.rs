@@ -14,7 +14,7 @@ use std::task::{
 Poll
 };
 
-struct Executor {
+pub struct Executor {
     queue: Mutex<VecDeque<Arc<Task>>>, // VecDeque - швидше за звичайний Vector і парцює з push_front, push_back. Що є доволі зручним у контексті мого рантайму (vec - 6 O(n), VecDeque O(1)), вона надає FIFO, тому це зручно.
 }
 struct Task {
@@ -23,7 +23,7 @@ struct Task {
 }
 
 impl Executor {
-    fn spawn<F>(self: &Arc<Self>, future: F)
+    pub fn spawn<F>(self: &Arc<Self>, future: F)
     where
         F: Future<Output = ()> + Send + 'static
     {
@@ -36,7 +36,7 @@ impl Executor {
         self.queue.lock().unwrap().push_back(task);
     }
 
-    fn run(&self) {
+    pub fn run(&self) {
         while let Some(task) = self.queue.lock().unwrap().pop_front() {
             let waker = Waker::from(task.clone());
             let mut cx = Context::from_waker(&waker);
@@ -61,21 +61,4 @@ impl Wake for Task {
         let mut queue = exec.queue.lock().unwrap();
         queue.push_back(self);
     }
-}
-fn main() {
-    let rt = Arc::new(Executor {
-        queue: Mutex::new(VecDeque::new())
-    });
-
-    rt.spawn(async {
-        println!("Hello from task 1");
-    });
-
-    rt.spawn(async {
-        println!("Hello from task 2");
-    });
-    rt.run();
-
-    println!("1");
-    println!("2");
 }
