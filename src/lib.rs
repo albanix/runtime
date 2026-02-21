@@ -9,16 +9,10 @@ use std::collections::{
 };
 use std::pin::Pin;
 use std::future::Future;
-use std::os::unix::io::{
-    RawFd, 
-    AsRawFd
-};
+use std::os::unix::io::RawFd;
+
 use libc::{
-    epoll_create,
-    epoll_event,
-    EPOLLIN,
-    EPOLLOUT,
-    EPOLL_CTL_ADD
+    EPOLL_CTL_ADD, EPOLLIN, EPOLLOUT, epoll_event, epoll_wait
 };
 
 use std::task::{
@@ -55,22 +49,17 @@ impl Executor {
         self.queue.lock().unwrap().push_back(task);
     }
 
-    pub fn run(&self) {
+    pub fn run(&self, reactor: &Reactor) {
         while let Some(task) = self.queue.lock().unwrap().pop_front() {
             let waker = Waker::from(task.clone());
             let mut cx = Context::from_waker(&waker);
 
             let mut future = task.future.lock().unwrap();
 
-            match future.as_mut().poll(&mut cx) {
-                Poll::Ready(_) => { 
-                    // Таска виконається
-                },
-                Poll::Pending => { 
-                    // Таска покладеться в стек //
-                },
-            }
+            if let Poll::Pending = future.as_mut().poll(&mut cx) {};
         }
+
+        reactor.wait();
     }
 }
 
@@ -104,5 +93,19 @@ impl Reactor {
         }
 
         self.wakers.lock().unwrap().insert(fd, waker);
+    }
+
+    pub fn wait(&self) {
+        let mut events = [libc::epoll_event { events: 0, u64: 0} ];
+        let nfds = unsafe {
+            epoll_wait(self.epoll_fd, events.as_mut_ptr(), 1024, -1)
+        };
+
+        for i in 0..nfds as usize {
+            let fd = events[i].u64 as RawFd;
+            if let Some(waker)  = self.wakers.lock().unwrap().remove(&fd) {
+                waker.wake();
+            }
+        }
     }
 }
